@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { resolveOptions, run, type RunOptions } from "../src/cli.ts";
 import type { ModelRunner } from "../src/types.ts";
-import { fakeRunner, localIso, omp, tmpDir, writeJsonl } from "./helpers.ts";
+import { cc, fakeRunner, localIso, omp, tmpDir, writeJsonl } from "./helpers.ts";
 
 const DAY = "2026-01-15";
 const REPO = resolve(import.meta.dir, "..");
@@ -29,7 +29,10 @@ function fixture() {
 }
 
 function options(home: string, root: string, extra: Partial<RunOptions> = {}): RunOptions {
-  return { day: DAY, out: tmpDir(), workDir: tmpDir(), model: "fake", chunk: 60_000, concurrency: 2, ompRoot: root, home, repoRoot: REPO, ...extra };
+  return {
+    day: DAY, out: tmpDir(), workDir: tmpDir(), model: "fake", chunk: 60_000, concurrency: 2,
+    sources: ["omp", "claude-code"], ompRoot: root, claudeRoot: join(home, ".claude", "projects"), home, repoRoot: REPO, ...extra,
+  };
 }
 
 const filesUnder = (dir: string): string[] =>
@@ -64,7 +67,10 @@ describe("run", () => {
     const cov = JSON.parse(readFileSync(join(opts.out, DAY, "coverage.json"), "utf8"));
     expect(cov.day).toBe(DAY);
     expect(cov.model).toBe("fake");
-    expect(cov.sources.supported).toEqual([{ source: "omp", present: true, filesScanned: 3, listErrors: [] }]);
+    expect(cov.sources.supported).toEqual([
+      { source: "omp", present: true, filesScanned: 3, listErrors: [] },
+      { source: "claude-code", present: false, filesScanned: 0, listErrors: [] },
+    ]);
     expect(cov.sources.detectedUnsupported).toEqual(["codex"]);
     expect(cov.files.map((f: any) => f.file).sort()).toEqual(["proj/s1.jsonl", "proj/s1/sub1.jsonl", "proj/s2.jsonl"]);
     const s1 = cov.files.find((f: any) => f.file === "proj/s1.jsonl");
@@ -113,6 +119,63 @@ describe("run", () => {
     const cov = JSON.parse(readFileSync(join(opts.out, DAY, "coverage.json"), "utf8"));
     expect(cov.sources.supported[0].present).toBe(false);
     expect(existsSync(join(opts.out, DAY, "overview.md"))).toBe(true);
+  });
+});
+
+describe("two sources", () => {
+  /** omp fixture plus a Claude Code session on the same day. */
+  function both() {
+    const { home, root } = fixture();
+    const claudeRoot = join(home, ".claude", "projects");
+    writeJsonl(join(claudeRoot, "proj", "c1.jsonl"), [cc.aiTitle("Claude 会话"), cc.user(at(11, 0), "整理测试"), cc.assistant(at(11, 1), [cc.text("好")])]);
+    return { home, root, claudeRoot };
+  }
+
+  test("both sources end up in the outputs and are listed separately in the coverage list", async () => {
+    const { home, root } = both();
+    const opts = options(home, root);
+    await run(opts, fakeRunner());
+    const cov = JSON.parse(readFileSync(join(opts.out, DAY, "coverage.json"), "utf8"));
+    expect(cov.sources.supported.map((s: any) => [s.source, s.present, s.filesScanned])).toEqual([["omp", true, 3], ["claude-code", true, 1]]);
+    expect(cov.files.map((f: any) => `${f.source}:${f.file}`)).toContain("claude-code:proj/c1.jsonl");
+    const items = readFileSync(join(opts.out, DAY, "items.md"), "utf8");
+    expect(items).toContain("用户要求：整理测试");
+    expect(items).toContain("claude-code proj/c1.jsonl 行 2");
+    expect(items).toContain("omp proj/s1.jsonl 行 4");
+  });
+
+  test("a record copied into a later session file is kept once, in the session that started first", async () => {
+    const { home, root, claudeRoot } = both();
+    // "z0" is the original; "c2" is a later session that copied z0's record, timestamp included,
+    // before adding its own. Both start at the same time, so the older file wins. The names are
+    // chosen so that path order alone would pick the copy.
+    const original = join(claudeRoot, "proj", "z0.jsonl");
+    const copy = join(claudeRoot, "proj", "c2.jsonl");
+    writeJsonl(copy, [cc.user(at(9, 30), "原始请求", undefined, "shared"), cc.user(at(13, 0), "继续")]);
+    writeJsonl(original, [cc.user(at(9, 30), "原始请求", undefined, "shared")]);
+    utimesSync(original, new Date(2026, 0, 15, 12), new Date(2026, 0, 15, 12));
+    utimesSync(copy, new Date(2026, 0, 15, 18), new Date(2026, 0, 15, 18));
+    const opts = options(home, root);
+    const cov = await run(opts, fakeRunner());
+    const z0 = cov.sessions.find((s) => s.session === "claude-code:proj/z0")!;
+    const c2 = cov.sessions.find((s) => s.session === "claude-code:proj/c2")!;
+    const items = readFileSync(join(opts.out, DAY, "items.md"), "utf8");
+    expect(items.match(/用户要求：原始请求/g)!.length).toBe(1);
+    expect(items).toContain(`来源 ${z0.label}：claude-code proj/z0.jsonl 行 1`);
+    expect(c2.lines).toBe(1);
+    expect(cov.files.find((f) => f.file === "proj/c2.jsonl")!.duplicates).toBe(1);
+  });
+
+  test("--source limits which sources are read", async () => {
+    const { home, root } = both();
+    const opts = options(home, root, { sources: ["omp"] });
+    const cov = await run(opts, fakeRunner());
+    expect(cov.sources.supported.map((s: any) => s.source)).toEqual(["omp"]);
+    expect(readFileSync(join(opts.out, DAY, "items.md"), "utf8")).not.toContain("整理测试");
+  });
+
+  test("an unknown source name is an error", () => {
+    expect(() => resolveOptions(["--day", DAY, "--out", tmpDir(), "--source", "codex"], { configPath: join(tmpDir(), "none.json"), home: tmpDir() })).toThrow("--source");
   });
 });
 

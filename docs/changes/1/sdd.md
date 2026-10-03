@@ -1,6 +1,6 @@
 # 软件设计说明（Software Design Description，SDD）：完整、可追溯的 Agent 工作回顾
 
-> 状态：已于 2026-10-02 获发起人认可。
+> 状态：已于 2026-10-02 获发起人认可；2026-10-03 按 #3 的核实结果修订的「Claude Code 映射」和「按天筛选与去重」随 #3 实施计划获认可，其中「最早时间相同时比文件修改时间」一句为认可后实现时补充，待审。
 > 依据：SRS `docs/changes/1/srs.md`（D1–D18 及「未定」一节）。
 > 本文对 SRS「未定」中属于设计的条目给出方案。凡标「未经原型验证」的内容是设计推断，不是已观察到的行为。
 
@@ -69,30 +69,37 @@
 
 **omp 映射**（已由原型验证）：按 SRS D6 的表。主会话是工作目录子目录下的 JSONL 文件，子 agent 记录在以主会话命名的下级目录中，可多级嵌套。
 
-**Claude Code 映射**（未经原型验证；依据是对本机近期记录的字段统计）：
+**Claude Code 映射**（2026-10-03 按 #3 的核实结果修订，修订部分待审；依据是对一台 Windows 机器上全部 Claude Code 记录的只读统计，客户端版本约 2.1.26x–2.1.28x）：
 
 | 原始记录 | 统一记录 |
 |---|---|
-| 主会话文件；`subagents/` 下的 JSONL | 主会话记录；子 agent 记录（`subagent` 为真） |
-| `user`，内容为文字，非 `isMeta` | `user` |
+| 主会话文件；`subagents/` 下的 JSONL | 主会话记录；子 agent 记录（`subagent` 为真）。子 agent 文件里的用户记录是父 agent 的指令，归为 `subagent_task` |
+| `user`，`origin.kind` 为 `human` | `user`。斜杠命令（`<command-name>` 等标签）还原成「/命令 参数」一行；用户执行的 shell 命令（`<bash-input>`）还原成「! 命令」 |
+| `user`，没有 `origin` 字段，文字不以 `<` 开头 | `user`（旧版本客户端和 SDK 发起的输入没有这个字段） |
+| `user`，`origin.kind` 为其他值（后台任务通知、协调者） | `skipped` |
+| `user`，`isMeta` 为真，或文字是命令输出、命令说明等客户端标签 | `skipped` |
+| `user`，文字为「[Request interrupted by user]」 | `stop`（用户中断） |
+| `user`，上下文续接摘要（「This session is being continued…」） | `marker` |
 | `user`，内容为 `tool_result` | 不单独成记录，按 `tool_use_id` 并入对应的工具调用，`is_error` 决定成功或报错 |
+| `attachment`，类型 `queued_command`，`commandMode` 为 `prompt` | `user`（用户在 agent 工作中途发来的消息） |
+| 其余 `attachment`、`queue-operation` | `skipped` |
 | `assistant` 的文字块 | `assistant` |
-| `assistant` 的 `tool_use` 块 | `tool` / `tool_error`；向用户提问的工具归为 `ask`，启动子 agent 的工具其参数归为 `subagent_task` |
+| `assistant` 的 `tool_use` 块 | `tool` / `tool_error`；`AskUserQuestion` 归为 `ask` 并附上回答 |
 | `assistant` 的思考块 | `skipped` |
 | `assistant` 带接口报错或中途中止标记 | `stop` |
 | `pr-link` | `tool`（成功），文字为 PR 仓库和编号 |
-| `system` 中的离开期间摘要、`attachment`、`queue-operation`、各类无时间戳的状态记录 | `skipped` |
-| `tool-results/` 下的文件、`subagents/` 下的 JSON 元数据、会话目录里的其他文件 | 不读取，按扩展名计数写入覆盖清单 |
+| `system` 记录、各类无时间戳的状态记录 | `skipped` |
+| `tool-results/` 下的文件、`subagents/` 下的 JSON 元数据、会话目录里的其他文件 | 不读取 |
 
-三处需要在实现时先用小原型核实，核实前不声称 Claude Code 已支持：
-1. `user` 记录的文字里混有客户端注入的内容（提醒、命令输出说明等），怎样只留下用户真正输入的部分。
-2. 排队的用户消息（`queue-operation` 和 `queued_command` 类附件）是否会以普通 `user` 记录再出现一次；如果不会，它们需要改为送入。
-3. 恢复或分叉会话时，旧记录是否会被复制进新文件。
+核实结论（原先列为三处未知）：
+1. **注入内容**：主会话里有文字的用户记录约 2,200 条，其中约 1,430 条是用户输入；其余是后台任务通知（约 420 条）、技能正文注入（约 190 条，带 `isMeta`）、命令输出与说明、用户中断标记等。`origin.kind` 能区分大部分；较早版本没有该字段，需要按文字开头的客户端标签排除。
+2. **排队消息**：757 条入队消息中，496 条随后以普通用户记录出现，239 条以 `queued_command` 附件送达（其中用户消息 29 条，其余是任务通知），只有 23 条两处都找不到（大多是任务通知）。附件与用户记录几乎不重叠（255 条里 1 条）。因此用户消息取「用户记录 + `commandMode` 为 `prompt` 的附件」，不读 `queue-operation`。
+3. **跨文件复制**：恢复或分叉会话时，旧记录会被复制进新会话文件：主会话文件间有 1,365 个 `uuid` 重复出现，子 agent 文件间也有。每个副本的 `sessionId` 都改成了所在文件的会话，不能据此分辨原件。去重时改为保留「最早开始的那个会话文件」里的副本（见下节），使旧记录归到原会话。
 
 ### 按天筛选与去重
 
 - 筛选按 SRS D3。
-- 去重：同一来源内 `id` 相同的记录只保留先遇到的一条，重复数写入覆盖清单。omp 记录未观察到跨文件重复；这一步主要为 Claude Code 的上面第 3 点预留。
+- 去重：同一来源内 `id` 相同的记录只保留一条，重复数写入覆盖清单。文件按其最早记录的时间排序后依次处理，所以保留下来的是最早开始的那个会话文件里的副本。被复制的记录保留原时间戳，两个文件的最早时间可能相同，这时再比文件修改时间，取较早的一个；这条次序依据的是本机唯一一对互相复制的文件（原件的修改时间较早），样本只有一个。选错时复制来的旧记录会归到后一个会话名下，内容仍只计一次。omp 记录未观察到跨文件重复；Claude Code 的恢复和分叉会话会复制旧记录（见上节第 3 点）。（2026-10-03 修订，待审：原写「保留先遇到的一条」。）
 
 ### 分块
 

@@ -81,8 +81,9 @@ function eventLine(e: ActivityEvent, refs: Map<string, RefInfo>): string {
   for (const r of e.refs) {
     const info = refs.get(r);
     if (!info) continue;
-    if (!byFile.has(info.file)) byFile.set(info.file, new Set());
-    byFile.get(info.file)!.add(info.line);
+    const where = `${info.source} ${info.file}`;
+    if (!byFile.has(where)) byFile.set(where, new Set());
+    byFile.get(where)!.add(info.line);
   }
   const src = [...byFile].map(([f, ls]) => `${f} 行 ${[...ls].sort((a, b) => a - b).join(", ")}`).join("；");
   const who = e.actor === "user" ? "用户" : `agent，${EVIDENCE[e.evidence]}`;

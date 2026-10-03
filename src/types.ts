@@ -65,6 +65,8 @@ export interface ReadResult {
   parsed: number;
   badLines: number;
   error?: string;
+  /** File modification time; breaks ties when choosing which copy of a duplicated record to keep. */
+  mtimeMs?: number;
 }
 
 export interface LocateResult {
@@ -76,6 +78,7 @@ export interface LocateResult {
 }
 
 export interface RefInfo {
+  source: string;
   file: string;
   line: number;
   id?: string;

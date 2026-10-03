@@ -5,8 +5,9 @@ Completeness-first, source-linked activity reports from existing AI agent sessio
 ## Status
 
 Early. A command-line report generator for one local calendar day runs on Windows and reads
-omp sessions only. Claude Code is not supported yet, and
-nothing has been verified on macOS.
+omp and Claude Code sessions. The Claude Code mapping was checked against client versions
+around 2.1.26x–2.1.28x on one Windows machine. Nothing has been verified on macOS, and other
+clients (including Codex CLI) are not read.
 
 The agreed requirements and design are in [`docs/changes/1/`](docs/changes/1/); the
 [project issues](https://github.com/Eridanus117/agent-activity-report/issues) track open work.
@@ -18,7 +19,7 @@ Requires [Bun](https://bun.sh) and a logged-in `omp`, which the tool calls non-i
 
 ```sh
 bun install
-bun run report --day 2026-10-01 --out <directory outside this repository>
+bun run report --day 2026-10-01 --out <directory outside this repository> [--source omp,claude-code]
 ```
 
 The report is written to `<out>/<day>/`: `overview.md`, `items.md` and `coverage.json`.

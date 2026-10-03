@@ -29,6 +29,7 @@ export function buildDigest(records: SourceRecord[]): Digest {
     const label = `${r.subagent ? "SUB " : ""}${LABEL[kind]}`;
     digest.lines.push({ ref, kind, subagent: r.subagent, text: `[${ref}] ${hhmm(r.timestamp!)} ${label}: ${r.text}` });
     digest.refs.set(ref, {
+      source: r.source,
       file: r.file,
       line: r.line,
       kind,

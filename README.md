@@ -4,8 +4,31 @@ Completeness-first, source-linked activity reports from existing AI agent sessio
 
 ## Status
 
-The project is being defined. There is no runnable application or validated report generator yet.
-The [project issues](https://github.com/Eridanus117/agent-activity-report/issues) contain the agreed requirements, open decisions, and handoff status.
+Early. A command-line report generator for one local calendar day runs on Windows and reads
+omp sessions only. Claude Code is not supported yet, and
+nothing has been verified on macOS.
+
+The agreed requirements and design are in [`docs/changes/1/`](docs/changes/1/); the
+[project issues](https://github.com/Eridanus117/agent-activity-report/issues) track open work.
+
+## Usage
+
+Requires [Bun](https://bun.sh) and a logged-in `omp`, which the tool calls non-interactively
+(no session saved, no tools) to extract and group events.
+
+```sh
+bun install
+bun run report --day 2026-10-01 --out <directory outside this repository>
+```
+
+The report is written to `<out>/<day>/`: `overview.md`, `items.md` and `coverage.json`.
+Digests, prompts and model replies stay in a per-user cache directory, never in `<out>`.
+`--out`, `--model` and other options can also be set in `~/.config/agent-activity-report/config.json`.
+
+```sh
+bun test           # synthetic data only; no model calls
+bun run typecheck
+```
 
 ## Goal
 

@@ -47,6 +47,30 @@ export const omp = {
   modelUsage: (ts: string, errorMessage?: string) => ({ type: "model_usage", id: nextId(), timestamp: ts, errorMessage }),
 };
 
+let cseq = 0;
+const cid = () => `u${++cseq}`;
+
+/** Claude Code-shaped records. Field names follow what the client writes; values are made up. */
+export const cc = {
+  user: (ts: string, content: string | object[], extra: object = { origin: { kind: "human" } }, uuid = cid()) => ({
+    type: "user", uuid, timestamp: ts, sessionId: "s", message: { role: "user", content }, ...extra,
+  }),
+  toolResult: (ts: string, toolUseId: string, text: string, isError = false) => ({
+    type: "user", uuid: cid(), timestamp: ts, sessionId: "s",
+    message: { role: "user", content: [{ type: "tool_result", tool_use_id: toolUseId, content: [{ type: "text", text }], is_error: isError }] },
+  }),
+  assistant: (ts: string, blocks: object[], extra: object = {}, uuid = cid()) => ({
+    type: "assistant", uuid, timestamp: ts, sessionId: "s", message: { role: "assistant", content: blocks }, ...extra,
+  }),
+  text: (text: string) => ({ type: "text", text }),
+  thinking: (text: string) => ({ type: "thinking", thinking: text }),
+  toolUse: (id: string, name: string, input: object) => ({ type: "tool_use", id, name, input }),
+  attachment: (ts: string, attachment: object) => ({ type: "attachment", uuid: cid(), timestamp: ts, sessionId: "s", attachment }),
+  aiTitle: (title: string) => ({ type: "ai-title", sessionId: "s", aiTitle: title }),
+  prLink: (ts: string, repo: string, n: number) => ({ type: "pr-link", sessionId: "s", timestamp: ts, prRepository: repo, prNumber: n, prUrl: `https://example.invalid/${n}` }),
+  system: (ts: string, subtype: string) => ({ type: "system", uuid: cid(), timestamp: ts, sessionId: "s", subtype }),
+};
+
 export function record(partial: Partial<SourceRecord> & Pick<SourceRecord, "kind">): SourceRecord {
   return {
     source: "omp",

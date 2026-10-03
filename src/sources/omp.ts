@@ -1,6 +1,6 @@
 // omp source adapter: the only module that knows the omp session record format.
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative, sep, toNamespacedPath } from "node:path";
 import type { Kind, Limits, LocateResult, ReadResult, SourceRecord } from "../types.ts";
@@ -47,6 +47,7 @@ export function read(root: string, file: string, limits: Limits): ReadResult {
   let raw: string;
   try {
     raw = readFileSync(lp(file), "utf8");
+    result.mtimeMs = statSync(lp(file)).mtimeMs;
   } catch (e) {
     result.error = errorText(e);
     return result;

@@ -96,6 +96,71 @@ export function reconcile(items: RawItem[], events: ActivityEvent[]): { items: R
   return { items: kept, orphans: events.filter((e) => !placed.has(e.id)), duplicates };
 }
 
+/**
+ * Second pass for events the merge left out. With many events in one call the model can drop
+ * whole runs of them; this asks only about those, against the items already formed.
+ */
+export function fillPrompt(day: string, leftOut: ActivityEvent[], items: { title: string; summary: string }[], titles: Map<string, string>): string {
+  const itemList = items.map((it, i) => `${i + 1}. ${it.title}：${it.summary}`).join("\n");
+  const list = leftOut
+    .map((e) => `${e.id} | ${e.session} ${(titles.get(e.session) ?? "").slice(0, 40)} | ${hhmm(e.time)} | ${e.type} | ${e.actor} | ${e.statement}`)
+    .join("\n");
+  return `任务：补充归并
+
+${day} 这一天的事件已经归并成下列事项，但还有一些事件没有归入任何事项。请把每个遗漏的事件归入最合适的已有事项，或者在它确实是另一件事时新开事项。
+每行输出一个 JSON（JSONL），不要外层数组，不要代码块，不要别的文字：
+- 归入已有事项：{"item":事项序号,"event_ids":["e40","e41"]}
+- 新开事项：{"title":"...","summary":"一到两句：做了什么、到哪一步","event_ids":["e60"],"open":["还没做完或待决定的具体事"]}
+
+要求：每个遗漏的事件编号必须且只能出现一次；不要列出不在遗漏列表里的事件；全部用中文。
+
+已有事项：
+${itemList}
+
+遗漏的事件（每行：事件编号 | 会话 | 时间 | 类型 | 行为人 | 陈述）：
+${list}
+
+只输出 JSONL。`;
+}
+
+export function parseFill(
+  text: string,
+  leftOut: Set<string>,
+  itemCount: number,
+): { additions: { item: number; eventIds: string[] }[]; newItems: RawItem[]; rejected: Rejection[] } {
+  const additions: { item: number; eventIds: string[] }[] = [];
+  const newItems: RawItem[] = [];
+  const rejected: Rejection[] = [];
+  const reject = (reason: string, detail: string) => rejected.push({ stage: "merge fill", reason, detail: detail.slice(0, 300) });
+  for (const raw of text.split("\n")) {
+    const line = raw.trim().replace(/,$/, "");
+    if (!line.startsWith("{")) continue;
+    let o: any;
+    try {
+      o = JSON.parse(line);
+    } catch {
+      reject("malformed line", line);
+      continue;
+    }
+    const cited: string[] = Array.isArray(o.event_ids) ? o.event_ids.map(String) : [];
+    for (const id of cited.filter((id) => !leftOut.has(id))) reject(`not a left-out event ${id}`, line);
+    const ids = cited.filter((id) => leftOut.has(id));
+    if (o.item !== undefined) {
+      const n = Number(o.item);
+      if (!Number.isInteger(n) || n < 1 || n > itemCount) reject(`item number out of range ${String(o.item)}`, line);
+      else if (ids.length) additions.push({ item: n, eventIds: ids });
+    } else if (ids.length) {
+      newItems.push({
+        title: String(o.title ?? "").trim() || "（无标题）",
+        summary: String(o.summary ?? "").trim(),
+        eventIds: ids,
+        open: Array.isArray(o.open) ? o.open.map(String) : [],
+      });
+    }
+  }
+  return { additions, newItems, rejected };
+}
+
 const STATUS_TEXT: Record<Item["status"], string> = {
   cancelled: "已取消",
   blocked: "阻塞",

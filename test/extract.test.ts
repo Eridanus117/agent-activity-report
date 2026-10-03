@@ -66,6 +66,14 @@ test("the placeholder for 'no events' is neither an event nor a rejection", () =
   expect(r.rejected).toEqual([]);
 });
 
+test("the prompt asks for short approvals as decisions that name what was approved and cite both records", () => {
+  const p = extractPrompt("2026-01-15", "标题", digest.lines, []);
+  expect(p).toContain("「按你推荐的来」");
+  expect(p).toContain("批准或否决的是哪一条推荐");
+  expect(p).toContain("同时列出这条用户消息和那条推荐所在的记录");
+  expect(p).toContain("叫停、改方向或说明不要做什么");
+});
+
 test("from the second chunk on, the prompt lists earlier events of the session as background", () => {
   const first = extractPrompt("2026-01-15", "标题", digest.lines, []);
   const second = extractPrompt("2026-01-15", "标题", digest.lines, ["用户要求修复登录"]);

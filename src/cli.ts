@@ -8,7 +8,7 @@ import { chunkLines } from "./chunk.ts";
 import { fileCoverage, largestItemShare, uncitedUserMessages, worthListing, type FileCoverage } from "./coverage.ts";
 import { buildDigest } from "./digest.ts";
 import { extractSession, type CallRecord } from "./extract.ts";
-import { mergePrompt, overviewPrompt, parseItems, reconcile, usableItems } from "./merge.ts";
+import { fillPrompt, mergePrompt, overviewPrompt, parseFill, parseItems, reconcile, usableItems } from "./merge.ts";
 import { makeRunner, ompInvoke } from "./model.ts";
 import { CHECKED_UNSUPPORTED, detectUnsupported } from "./probe.ts";
 import { renderItems, renderOverview } from "./render.ts";
@@ -200,6 +200,7 @@ export async function run(o: RunOptions, runner: ModelRunner) {
   let duplicates = 0;
   let mergeFailed = false;
   let overview = "";
+  const mergeFill = { leftOut: 0, added: 0, newItems: 0 };
   if (events.length) {
     const titles = new Map(sessions.map((s) => [s.label, s.title]));
     const merged = await runner(mergePrompt(o.day, events, titles), usableItems);
@@ -207,9 +208,25 @@ export async function run(o: RunOptions, runner: ModelRunner) {
     if (merged.ok) {
       const parsed = parseItems(merged.text, new Set(byId.keys()));
       rejected.push(...parsed.rejected);
-      const r = reconcile(parsed.items, events);
-      orphans = r.orphans;
+      let r = reconcile(parsed.items, events);
       duplicates = r.duplicates;
+      // Second pass only for what the merge left out.
+      if (r.orphans.length && r.items.length) {
+        mergeFill.leftOut = r.orphans.length;
+        const fill = await runner(fillPrompt(o.day, r.orphans, r.items, titles), usableItems);
+        calls.push({ name: "merge-fill", session: "", chars: r.orphans.length, ms: fill.ms, status: fill.ok ? "ok" : "failed", attempts: fill.attempts, cached: fill.cached, ...(fill.error ? { error: fill.error } : {}) });
+        if (fill.ok) {
+          const f = parseFill(fill.text, new Set(r.orphans.map((e) => e.id)), r.items.length);
+          rejected.push(...f.rejected);
+          const extended = r.items.map((it, i) => ({ ...it, eventIds: [...it.eventIds, ...f.additions.filter((a) => a.item === i + 1).flatMap((a) => a.eventIds)] }));
+          const before = r.orphans.length;
+          r = reconcile([...extended, ...f.newItems], events);
+          duplicates += r.duplicates;
+          mergeFill.added = before - r.orphans.length;
+          mergeFill.newItems = r.items.length - extended.length;
+        }
+      }
+      orphans = r.orphans;
       const position = (id: string) => Number(id.slice(1));
       items = r.items
         .map((it) => {
@@ -252,6 +269,7 @@ export async function run(o: RunOptions, runner: ModelRunner) {
     items: items.length,
     unmergedEvents: orphans.length,
     eventsInMultipleItems: duplicates,
+    mergeFill,
     largestItemShare: largestItemShare(items.map((i) => i.eventIds.length), events.length),
     userMessages,
     uncitedUserMessages: uncited,

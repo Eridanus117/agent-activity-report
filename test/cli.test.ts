@@ -93,6 +93,38 @@ describe("run", () => {
     expect(readFileSync(join(opts.out, DAY, "items.md"), "utf8")).not.toContain("更新 README");
   });
 
+  test("events the merge leaves out get a second pass, and nothing else is called when none are left out", async () => {
+    const { home, root } = fixture();
+    const prompts: string[] = [];
+    const base = fakeRunner(prompts);
+    // The merge drops the last event; the fill-in pass puts it into item 1.
+    const runner: ModelRunner = async (prompt, accept) => {
+      if (prompt.startsWith("任务：归并事项")) {
+        prompts.push(prompt);
+        const ids = [...prompt.matchAll(/^(e\d+) \|/gm)].map((m) => m[1]);
+        return { ok: true, text: JSON.stringify({ title: "合成事项", summary: "s", event_ids: ids.slice(0, -1), open: [] }), ms: 1, attempts: 1, cached: false };
+      }
+      if (prompt.startsWith("任务：补充归并")) {
+        prompts.push(prompt);
+        const left = [...prompt.matchAll(/^(e\d+) \|/gm)].map((m) => m[1]);
+        return { ok: true, text: JSON.stringify({ item: 1, event_ids: left }), ms: 1, attempts: 1, cached: false };
+      }
+      return base(prompt, accept);
+    };
+    const opts = options(home, root);
+    const cov = await run(opts, runner);
+    expect(cov.unmergedEvents).toBe(0);
+    expect(cov.mergeFill).toEqual({ leftOut: 1, added: 1, newItems: 0 });
+    expect(readFileSync(join(opts.out, DAY, "items.md"), "utf8")).not.toContain("未归并事件");
+    expect(prompts.filter((p) => p.startsWith("任务：补充归并")).length).toBe(1);
+
+    const quiet: string[] = [];
+    const opts2 = options(home, root);
+    const cov2 = await run(opts2, fakeRunner(quiet));
+    expect(quiet.some((p) => p.startsWith("任务：补充归并"))).toBe(false);
+    expect(cov2.mergeFill).toEqual({ leftOut: 0, added: 0, newItems: 0 });
+  });
+
   test("an output directory inside this repository is refused and nothing is written", async () => {
     const { home, root } = fixture();
     const out = join(REPO, "reports-should-not-exist");

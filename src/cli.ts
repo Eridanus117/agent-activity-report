@@ -22,7 +22,7 @@ export const DEFAULT_MODEL = "openai-codex/gpt-6-luna";
 export const DEFAULT_CHUNK = 60_000;
 export const SOURCES = ["omp", "claude-code"] as const;
 export type SourceName = (typeof SOURCES)[number];
-const ADAPTERS = { omp, "claude-code": claudeCode } as const;
+export const ADAPTERS = { omp, "claude-code": claudeCode } as const;
 
 export interface RunOptions {
   day: string;
@@ -51,7 +51,7 @@ const norm = (p: string) => {
   }
   return process.platform === "win32" ? real.toLowerCase() : real;
 };
-const isInside = (child: string, parent: string) => {
+export const isInside = (child: string, parent: string) => {
   const rel = relative(norm(parent), norm(child));
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 };

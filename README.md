@@ -26,6 +26,16 @@ The report is written to `<out>/<day>/`: `overview.md`, `items.md` and `coverage
 Digests, prompts and model replies stay in a per-user cache directory, never in `<out>`.
 `--out`, `--model` and other options can also be set in `~/.config/agent-activity-report/config.json`.
 
+A personal recap page counts what the raw records contain (sessions per day, longest sessions,
+messages by hour, most used tools, interruptions) and needs no model. It covers only what the
+clients have not yet cleaned up, and the page states the date range each source actually spans.
+
+```sh
+bun run recap --out <directory outside this repository> [--from 2026-09-01] [--to 2026-10-05]
+```
+
+The page is written to `<out>/recap.html`.
+
 ```sh
 bun test           # synthetic data only; no model calls
 bun run typecheck
